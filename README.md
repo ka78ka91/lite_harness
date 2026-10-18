@@ -107,7 +107,43 @@ lite_narness --model <名称>     临时覆盖默认模型
 lite_narness --config <路径>    指定配置文件（默认 config.json）
 lite_narness --prompt <路径>    指定系统提示词文件（默认 system_prompt.md）
 lite_narness --version
+lite_narness --serve --port 8899 --key sk-lite-test   # 内置模拟 AI 服务（见下）
 ```
+
+## 自测：内置模拟 AI 服务（`--serve`）
+
+无需真实 API Key，本程序可以**自己变成一个 AI**：启动一个 OpenAI 兼容的本地 HTTP 接口，用 Key 鉴权，专门用来测试本程序（流式、工具调用、错误处理等）。
+
+```
+lite_narness --serve --port 8899 --key sk-lite-test
+```
+
+启动后会打印可直接使用的配置。再用另一个终端（或把 `config.json`）指向它即可：
+
+```json
+{
+  "base_url": "http://127.0.0.1:8899/v1",
+  "api_key": "sk-lite-test",
+  "model": "mock-echo"
+}
+```
+
+接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/v1/models` | 列出模拟模型（需鉴权） |
+| GET | `/health` | 健康检查 |
+| POST | `/v1/chat/completions` | 对话补全，支持 `stream` 与 `tools` |
+
+模拟行为（可预测，便于断言）：
+
+- 普通消息 → 回显 `（模拟 AI · <model>）…你说：<内容>`。
+- 消息为 `工具: <名称> <JSON参数>`（且请求带 `tools`）→ 返回对应的 `tool_calls`。
+- 收到工具结果后 → 返回一段收尾文本，验证工具调用闭环。
+- 消息以 `!error` 开头 → 返回 HTTP 500，用于测试错误分支。
+
+参数：`--host`（默认 `127.0.0.1`）、`--port`（默认 `8899`）、`--key`（默认 `sk-lite-test`）。
 
 ## 工具调用（function calling）
 

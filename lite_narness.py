@@ -25,8 +25,10 @@ lite_narness — 极简 LLM 命令行对话工具 (TUI)
 from __future__ import annotations
 
 import argparse
+import http.server
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -37,7 +39,7 @@ import urllib.error
 import urllib.request
 
 APP = "lite_narness"
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 CONFIG_NAME = "config.json"
 CONFIG_EXAMPLE = "config.example.json"
 PROMPT_NAME = "system_prompt.md"
@@ -1256,9 +1258,265 @@ def is_interactive() -> bool:
     )
 
 
+# --------------------------------------------------------------------------- #
+# 内置“模拟 AI”服务（OpenAI 兼容，用 Key 鉴权）—— 用于测试本程序本身
+# --------------------------------------------------------------------------- #
+DEFAULT_SERVE_KEY = "sk-lite-test"
+SERVE_MODELS = ["mock-echo", "mock-tools"]
+
+_SERVE_TOOL_RE = re.compile(
+    r"^\s*(?:tool|工具)\s*[:：]\s*([A-Za-z_]\w*)\s*(\{.*\})?\s*$", re.S
+)
+
+
+def _mock_completion(messages, model, tools):
+    """按规则构造 (content, tool_calls)。行为可预测，便于测试本程序。"""
+    last = messages[-1] if messages else {}
+    content = (last.get("content") or "").strip()
+    role = last.get("role")
+
+    if tools:
+        m = _SERVE_TOOL_RE.match(content)
+        if m:
+            return None, [
+                {
+                    "id": "call_mock_1",
+                    "type": "function",
+                    "function": {"name": m.group(1), "arguments": m.group(2) or "{}"},
+                }
+            ]
+
+    if role == "tool":
+        first = (content.splitlines() or [""])[0][:120]
+        return (
+            f"（模拟 AI）已收到工具结果：{first}\n"
+            "这是一条模拟回答，用于验证工具调用闭环。",
+            None,
+        )
+
+    user_msgs = [m for m in messages if m.get("role") == "user"]
+    last_user = (user_msgs[-1].get("content") if user_msgs else "") or ""
+    return (
+        f"（模拟 AI · {model}）已收到 {len(messages)} 条消息。\n你说：{last_user}",
+        None,
+    )
+
+
+def _chunk_text(text, size=4):
+    return [text[i : i + size] for i in range(0, len(text), size)] or [""]
+
+
+class _MockHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server_version = f"{APP}-mock/{VERSION}"
+    expected_key = DEFAULT_SERVE_KEY
+    delay = 0.02
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("  · " + (fmt % args) + "\n")
+        sys.stderr.flush()
+
+    # ---- 响应助手 ----
+    def _send_json(self, code, obj):
+        data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _sse_start(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.close_connection = True
+
+    def _sse(self, obj):
+        self.wfile.write(("data: " + json.dumps(obj, ensure_ascii=False) + "\n\n").encode("utf-8"))
+        self.wfile.flush()
+
+    def _auth_ok(self):
+        if not self.expected_key:
+            return True
+        auth = self.headers.get("Authorization", "")
+        token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        return token == self.expected_key
+
+    def _reject_auth(self):
+        self._send_json(
+            401, {"error": {"message": "Invalid API key", "type": "invalid_request_error"}}
+        )
+
+    # ---- 路由 ----
+    def do_GET(self):
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path in ("/v1/models", "/models"):
+            if not self._auth_ok():
+                return self._reject_auth()
+            now = int(time.time())
+            data = [
+                {"id": m, "object": "model", "created": now, "owned_by": APP}
+                for m in SERVE_MODELS
+            ]
+            return self._send_json(200, {"object": "list", "data": data})
+        if path in ("/health", "/"):
+            return self._send_json(200, {"status": "ok", "app": APP, "version": VERSION})
+        self._send_json(404, {"error": {"message": "Not found"}})
+
+    def do_POST(self):
+        path = self.path.split("?", 1)[0].rstrip("/")
+        if path not in ("/v1/chat/completions", "/chat/completions"):
+            return self._send_json(404, {"error": {"message": "Not found"}})
+
+        try:
+            n = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            n = 0
+        raw = self.rfile.read(n) if n else b""
+        try:
+            req = json.loads(raw or b"{}")
+        except json.JSONDecodeError as e:
+            return self._send_json(400, {"error": {"message": f"Invalid JSON: {e}"}})
+
+        if not self._auth_ok():
+            return self._reject_auth()
+
+        model = req.get("model") or SERVE_MODELS[0]
+        messages = req.get("messages") or []
+        tools = req.get("tools")
+        content, tool_calls = _mock_completion(messages, model, tools)
+
+        # 便于测试错误分支：用户消息以 !error 开头即返回 500
+        last = messages[-1] if messages else {}
+        if str(last.get("content") or "").strip().startswith("!error"):
+            return self._send_json(
+                500, {"error": {"message": "mock failure (triggered by !error)"}}
+            )
+
+        created = int(time.time())
+        cid = f"chatcmpl-mock-{created}"
+
+        if req.get("stream"):
+            self._sse_start()
+
+            def frame(delta, finish=None):
+                return {
+                    "id": cid,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+                }
+
+            self._sse(frame({"role": "assistant", "content": ""}))
+            if tool_calls:
+                for i, tc in enumerate(tool_calls):
+                    self._sse(
+                        frame(
+                            {
+                                "tool_calls": [
+                                    {
+                                        "index": i,
+                                        "id": tc["id"],
+                                        "type": "function",
+                                        "function": {
+                                            "name": tc["function"]["name"],
+                                            "arguments": "",
+                                        },
+                                    }
+                                ]
+                            }
+                        )
+                    )
+                    for piece in _chunk_text(tc["function"]["arguments"], 6):
+                        self._sse(frame({"tool_calls": [{"index": i, "function": {"arguments": piece}}]}))
+                        time.sleep(self.delay)
+                self._sse(frame({}, "tool_calls"))
+            else:
+                for piece in _chunk_text(content or "", 3):
+                    self._sse(frame({"content": piece}))
+                    time.sleep(self.delay)
+                self._sse(frame({}, "stop"))
+            if (req.get("stream_options") or {}).get("include_usage"):
+                self._sse(
+                    {
+                        "id": cid,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model,
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": 12,
+                            "completion_tokens": 8,
+                            "total_tokens": 20,
+                        },
+                    }
+                )
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            return
+
+        if tool_calls:
+            message = {"role": "assistant", "content": None, "tool_calls": tool_calls}
+            finish = "tool_calls"
+        else:
+            message = {"role": "assistant", "content": content or ""}
+            finish = "stop"
+        self._send_json(
+            200,
+            {
+                "id": cid,
+                "object": "chat.completion",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20},
+            },
+        )
+
+
+def run_server(host, port, key, delay=0.02) -> int:
+    _MockHandler.expected_key = key or ""
+    _MockHandler.delay = delay
+    try:
+        httpd = http.server.ThreadingHTTPServer((host, port), _MockHandler)
+    except OSError as e:
+        emit_error(f"无法在 {host}:{port} 启动模拟服务：{e}")
+        return 1
+
+    base = f"http://{host}:{port}/v1"
+    emit_info("内置模拟 AI 服务已启动（OpenAI 兼容，用于测试本程序）")
+    emit_info(f"接口地址 base_url：{base}")
+    emit_info(f"鉴权 Key  api_key：{key or '（未设置：接受任意/无 Key）'}")
+    emit_info(f"可用模型   model  ：{', '.join(SERVE_MODELS)}")
+    emit_info('测试工具调用：对话里输入  工具: run_shell {"command":"echo hi"}')
+    emit_info("触发错误分支：发送以 !error 开头的消息。按 Ctrl+C 停止。")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        emit_info("已停止模拟服务。")
+    finally:
+        httpd.server_close()
+    return 0
+
+
 def parse_args(argv) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog=APP, description="极简 LLM 命令行对话工具（TUI，配置外置，支持工具调用）。"
+    )
+    p.add_argument(
+        "--serve",
+        action="store_true",
+        help="以“模拟 AI”服务模式运行：提供 OpenAI 兼容接口（用 --key 鉴权），用于测试本程序。",
+    )
+    p.add_argument("--host", default="127.0.0.1", help="模拟服务监听地址（默认 127.0.0.1）")
+    p.add_argument("--port", type=int, default=8899, help="模拟服务监听端口（默认 8899）")
+    p.add_argument(
+        "--key", default=DEFAULT_SERVE_KEY, help=f"模拟服务鉴权 Key（默认 {DEFAULT_SERVE_KEY}）"
     )
     p.add_argument("--model", "-m", help="临时覆盖配置中的默认模型")
     p.add_argument("--config", "-c", default=CONFIG_NAME, help=f"配置文件路径（默认 {CONFIG_NAME}）")
@@ -1280,6 +1538,9 @@ def main(argv=None) -> int:
             sys.stdin.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
+
+    if args.serve:
+        return run_server(args.host, args.port, args.key)
 
     interactive = is_interactive()
 
