@@ -1,10 +1,10 @@
 @echo off
 setlocal
-echo [1/2] 安装打包工具 PyInstaller（如已安装会自动跳过）...
-python -m pip install --upgrade pyinstaller || goto :err
+echo [1/2] 安装依赖（prompt_toolkit 与打包工具 PyInstaller）...
+python -m pip install --upgrade prompt_toolkit pyinstaller || goto :err
 
 echo [2/2] 打包单文件可执行程序 lite_narness.exe ...
-python -m PyInstaller --onefile --name lite_narness --clean lite_narness.py || goto :err
+python -m PyInstaller --onefile --name lite_narness --clean --noconfirm lite_narness.py || goto :err
 
 echo.
 echo 完成：dist\lite_narness.exe
