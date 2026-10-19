@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-lite_narness — 极简 LLM 命令行对话工具 (TUI)
+lite_harness — 极简 LLM 命令行对话工具 (TUI)
 
 设计目标：配置外置、启动简单、够用即可。
 
@@ -15,10 +15,10 @@ lite_narness — 极简 LLM 命令行对话工具 (TUI)
 - 应用内配置界面（/config），配置缺失时自动创建空配置并进入配置界面
 
 用法：
-    lite_narness                  使用 config.json 中的默认模型
-    lite_narness --model <名称>   临时覆盖默认模型
-    lite_narness --config <路径>  指定配置文件
-    lite_narness --prompt <路径>  指定系统提示词文件
+    lite_harness                  使用 config.json 中的默认模型
+    lite_harness --model <名称>   临时覆盖默认模型
+    lite_harness --config <路径>  指定配置文件
+    lite_harness --prompt <路径>  指定系统提示词文件
 
 安全：API Key 不会被打印到终端；工具为全自动执行，请谨慎使用。
 """
@@ -38,8 +38,8 @@ import unicodedata
 import urllib.error
 import urllib.request
 
-APP = "lite_narness"
-VERSION = "3.1.0"
+APP = "lite_harness"
+VERSION = "3.1.1"
 CONFIG_NAME = "config.json"
 CONFIG_EXAMPLE = "config.example.json"
 PROMPT_NAME = "system_prompt.md"
@@ -723,7 +723,7 @@ if HAVE_PT:
                 ("__cancel__", "✘ 取消"),
             ]
             choice = radiolist_dialog(
-                title="lite_narness 配置",
+                title="lite_harness 配置",
                 text="选择要修改的项（可鼠标点击），编辑完成后选择“保存并返回”。",
                 values=values,
                 ok_text="确定",

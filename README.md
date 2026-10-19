@@ -1,4 +1,4 @@
-# lite_narness
+# lite_harness
 
 极简的 LLM 命令行对话工具（全屏 TUI）。配置外置、启动简单、够用即可；支持流式输出与工具调用（function calling）。
 
@@ -29,8 +29,8 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `lite_narness.py` | 入口实现（单文件） |
-| `lite_narness.cmd` / `lite_narness.sh` | Windows / Unix 开发启动脚本 |
+| `lite_harness.py` | 入口实现（单文件） |
+| `lite_harness.cmd` / `lite_harness.sh` | Windows / Unix 开发启动脚本 |
 | `config.json` | **你的**配置（缺失时自动创建，勿提交版本库） |
 | `config.example.json` | 配置模板（不含真实 Key） |
 | `system_prompt.md` | 系统提示词（缺失时自动创建默认内容） |
@@ -52,11 +52,11 @@
 
    | 环境 | 命令 |
    | --- | --- |
-   | Windows 开发 | `lite_narness.cmd` |
-   | macOS / Linux 开发 | `chmod +x lite_narness.sh && ./lite_narness.sh` |
-   | 打包后的 exe | `lite_narness.exe` |
+   | Windows 开发 | `lite_harness.cmd` |
+   | macOS / Linux 开发 | `chmod +x lite_harness.sh && ./lite_harness.sh` |
+   | 打包后的 exe | `lite_harness.exe` |
 
-> 裸命令 `lite_narness`：把打包产物 `lite_narness.exe` 放到工作区目录并将其加入系统 `PATH` 即可。
+> 裸命令 `lite_harness`：把打包产物 `lite_harness.exe` 放到工作区目录并将其加入系统 `PATH` 即可。
 
 ## 配置说明（config.json）
 
@@ -103,11 +103,11 @@ exit | quit      退出（也可 Ctrl+C / Ctrl+D）
 启动参数：
 
 ```
-lite_narness --model <名称>     临时覆盖默认模型
-lite_narness --config <路径>    指定配置文件（默认 config.json）
-lite_narness --prompt <路径>    指定系统提示词文件（默认 system_prompt.md）
-lite_narness --version
-lite_narness --serve --port 8899 --key sk-lite-test   # 内置模拟 AI 服务（见下）
+lite_harness --model <名称>     临时覆盖默认模型
+lite_harness --config <路径>    指定配置文件（默认 config.json）
+lite_harness --prompt <路径>    指定系统提示词文件（默认 system_prompt.md）
+lite_harness --version
+lite_harness --serve --port 8899 --key sk-lite-test   # 内置模拟 AI 服务（见下）
 ```
 
 ## 自测：内置模拟 AI 服务（`--serve`）
@@ -115,7 +115,7 @@ lite_narness --serve --port 8899 --key sk-lite-test   # 内置模拟 AI 服务�
 无需真实 API Key，本程序可以**自己变成一个 AI**：启动一个 OpenAI 兼容的本地 HTTP 接口，用 Key 鉴权，专门用来测试本程序（流式、工具调用、错误处理等）。
 
 ```
-lite_narness --serve --port 8899 --key sk-lite-test
+lite_harness --serve --port 8899 --key sk-lite-test
 ```
 
 启动后会打印可直接使用的配置。再用另一个终端（或把 `config.json`）指向它即可：
@@ -161,10 +161,10 @@ build_exe.cmd
 
 ```
 python -m pip install prompt_toolkit pyinstaller
-python -m PyInstaller --onefile --name lite_narness --clean lite_narness.py
+python -m PyInstaller --onefile --name lite_harness --clean lite_harness.py
 ```
 
-产物在 `dist\lite_narness.exe`，单文件、目标机无需 Python 环境。把它与 `config.json`、`system_prompt.md` 放在同一目录。
+产物在 `dist\lite_harness.exe`，单文件、目标机无需 Python 环境。把它与 `config.json`、`system_prompt.md` 放在同一目录。
 
 > 提示：TUI（补全菜单、配置窗口）需要真实终端窗口；若在无终端环境（如管道重定向）运行，会自动降级为纯文本模式。
 
